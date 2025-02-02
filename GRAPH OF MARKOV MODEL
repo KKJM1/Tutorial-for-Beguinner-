@@ -1,0 +1,52 @@
+#Script Diagram Final
+library(DiagrammeR)
+
+library(diagram)
+
+a_graph <-                   
+    create_graph() %>%
+    add_node(label = "Moderate\nPain\n(MP)",
+
+             node_aes = node_aes(fontsize = 6,x = 0,y = 2)) %>%
+
+    add_node(label = "Severe \nPain\n(SP)",
+
+             from = 1,
+
+             node_aes = node_aes(fontsize = 6,x = 2,y = 2),
+
+             edge_aes = edge_aes(label = "p_MPSP" , fontsize = 5, len = 0.5)) %>%
+
+    add_node(label = "Succes\n(S)",
+
+             from = c(1,2),
+
+             node_aes = node_aes(fontsize = 6,x = 1,y = 1),
+
+             edge_aes = edge_aes(label = c("p_MPS", "p_SPS"), fontsize = 5, len = 0.5)) %>%
+
+    add_node(label = "Dead\n(D)", 
+
+             from = c(1,2,3),
+
+             node_aes = node_aes(fontsize = 6,x = 1,y = 0),
+
+             edge_aes = edge_aes(label = c("p_MPD", "p_SPD", "p_SD"), fontsize = 5, len = 0.5)) %>%
+
+    add_edge(from = 2, to = 1, edge_aes = edge_aes(label = "p_SPMP")) %>%
+
+    add_edge(from = 3, to = 1, edge_aes = edge_aes(label = "p_SMP")) %>%
+
+    add_edge(from = 3, to = 2, edge_aes = edge_aes(label = "p_SSP")) %>%
+
+    add_edge(from = 1, to = 1, edge_aes = edge_aes(label = " ")) %>%
+
+    add_edge(from = 2, to = 2, edge_aes = edge_aes(label = " ")) %>%
+
+    add_edge(from = 3, to = 3, edge_aes = edge_aes(label = " ")) %>%
+
+    add_edge(from = 4, to = 4, edge_aes = edge_aes(label = " "))
+
+render_graph(a_graph) 
+
+
