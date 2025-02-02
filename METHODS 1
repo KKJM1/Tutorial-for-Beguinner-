@@ -1,0 +1,582 @@
+METHODS 1
+## Load packages ----
+library(dplyr)
+library(tidyr)
+library(reshape2)   # For melting data
+library(ggplot2)    # For plotting
+library(ggrepel)    # For plotting
+library(ellipse)    # For plotting
+library(scales)     # For dollar signs and commas
+library(dampack)  # Uncomment to use CEA and PSA visualization functionality from dampack instead of the functions included in this repository
+library(darthtools) # Uncomment to use WCC, parameter transformation, and matrix checks from darthtools instead of the functions included in this repository
+library(doParallel) # For running PSA in parallel
+
+#-------------------------- General setup----------------------------------
+
+cycle_length <- 1 # cycle length equal halth year
+n_age_init <- 25   # age at baseline
+n_age_max  <- 45  # maximum age of follow up
+n_cycles <- (n_age_max - n_age_init) # number of cycles
+n_cycles <- 20
+v_names_states <- c("MP", "SP", "S", "D") # the 4 health states of the model:
+n_cohort <- 1 
+n_cohort1 <- 1000 pour le PSA à décider
+
+# Moderate Pain (MP), Severe Pain (SP), Succes (S), Dead (D)
+
+n_states <- length(v_names_states) # number of health states 
+d_c <- d_e <- 0.05 # equal discount of costs and QALYs by 5%
+v_names_str <- c("Standard of care", "Innovative therapie") # store the strategy names
+                 
+
+##---------------- Transition probabilities (per cycle)-------------------------
+                         # Standard of care (SoC)
+p_MPSP <- 0.75 # probability of Moderate Pain becoming severe Pain
+p_MPS <- 0.10 # probability of Moderate Pain Getting Succes Treatment
+
+p_SPMP <- 0.20     # probability of Severe Pain becoming Moderate Pain
+p_SPS <- 0.07 # probability of Severe Pain Getting Succes Treatment
+
+p_SMP <- 0.20 # probability of Succes Treatment becoming Moderate Pain
+p_SSP <- 0.30 # probability of Succes Treatment becoming Severe Pain
+
+                          # Innovative Therapie (BT)
+p_MPSP2 <- 0.17 # probability of Moderate Pain becoming severe Pain
+p_MPS2 <- 0.63 # probability of Moderate Pain Getting Succes Treatment
+
+p_SPMP2 <- 0.20 # probability of Severe Pain becoming Moderate Pain
+p_SPS2 <- 0.60 # probability of Severe Pain Getting Succes Treatment
+
+p_SMP2 <- 0.21 # probability of Succes Treatment becoming Moderate Pain
+p_SSP2 <- 0.11     # probability of Succes Treatment becoming Severe Pain
+p_D <- 0.002     # probability of dead all cause
+
+## ---------------------------------------------Dead all cause---------------------------------------------------------------
+
+## Mortality rates it’same for all age, all states, and each strategy 
+## Taux d'incidence Annuel (r_M) =0,34/1000 = 0,00034  
+ 
+## Probabilities of dying are same for both strategies 
+#r_M <- 0,00034
+#cycle_length <- 1
+
+#p_D <- 1 - exp(-r_M*cycle_length) # probability of dying when Succes Treatment 
+
+##---------------------------------------- Cost and utility inputs-------------------------------------------------------- 
+                                          # Standard of care (SoC)
+
+# State rewards
+c_MP    <- 1 144 # cost of being Moderate pain 
+c_SP   <- 1 378 # cost of being Severe Pain 
+c_S   <- 183# cost of being Succes Treatment 
+c_D   <- 0
+u_MP    <- 0.738     # utility of being Moderate pain
+u_SP   <- 0.29# utility of being Severe Pain
+u_S   <- 0.89# utility of being Succes Treatment
+u_D   <- 0
+
+                                         # Innovative Therapie (BT)
+ # State rewards
+c_MP2 <- 937 # cost of being Moderate pain 
+c_SP2   <- 427 # cost of being Severe Pain 
+c_S2   <- 731 # cost of being Succes Treatment 
+c_D2   <- 0
+
+u_MP2    <- 0.78 # utility of being Moderate pain
+u_SP2   <- 0.38# utility of being Severe Pain
+u_S2   <- 0.92# utility of being Succes Treatment
+u_D2   <- 0
+#----------------------------------------------- PSA parameters----------------------------------------------------------
+n_sim <- 1000 # Number of PSA samples
+
+## -----------------------------------------Dysmenorrhea-s0---------------------------------------------------------------
+
+v_s_init <- c(MP = 1, SP = 0, S = 0, D = 0) # initial state vector
+v_s_init
+
+
+## --------------------------- Dysmenorrhea-Cohorte Trace Matrice-------------------------------------------------
+## Initialize cohort trace for SoC
+m_M <- matrix(NA, 
+              nrow = (n_cycles + 1), ncol = n_states, 
+              dimnames = list(0:n_cycles, v_names_states))
+# Store the initial state vector in the first row of the cohort trace
+m_M[1, ] <- v_s_init
+
+## Initialize cohort trace for strategy BT 
+
+m_M_strBT <- m_M # Strategy BT
+
+
+
+## -------------------------- Dysmenorrhea –TProbM SoC---------------------------------------------------------------
+
+## Initialize transition probability matrix for SoC
+m_P <- matrix(0, 
+              nrow = n_states, ncol = n_states, 
+              dimnames = list(v_names_states, v_names_states)) # row and column names
+## Fill in matrix
+# From MP
+m_P["MP", "MP"]   <- 1 - p_MPSP - p_MPS - p_D
+m_P["MP", "SP"]  <- p_MPSP 
+m_P["MP", "S"]   <- p_MPS
+m_P["MP", "D"]   <- p_D
+
+# From SP
+m_P["SP", "SP"]  <- 1 - p_SPMP - p_SPS - p_D
+m_P["SP", "MP"] <-  p_SPMP
+m_P["SP", "S"] <- p_SPS
+m_P["SP", "D"]  <- p_D
+
+# From S
+m_P["S", "S"] <- 1 - p_SMP - p_SSP - p_D
+m_P["S", "MP"]  <- p_SMP
+m_P["S", "SP"]  <- p_SSP
+m_P["S", "D"]  <- p_D
+
+# From D
+m_P["D", "D"]   <- 1
+m_P
+
+
+## ------------------------Dysmenorrhea –TProbM BT -----------------------------------------------------------------
+## Initialize transition probability matrix for BT
+
+m_P_strBT <- matrix(0, 
+              nrow = n_states, ncol = n_states, 
+              dimnames = list(v_names_states, v_names_states)) # row and column names
+## Fill in matrix
+# From MP
+m_P_strBT ["MP", "MP"]   <- 1 - p_MPSP2 - p_MPS2 - p_D
+m_P_strBT ["MP", "SP"]  <- p_MPSP2
+m_P_strBT ["MP", "S"]   <- p_MPS2
+m_P_strBT ["MP", "D"]   <- p_D
+
+# From SP
+m_P_strBT ["SP", "SP"]  <- 1 - p_SPMP2 - p_SPS2 - p_D 
+m_P_strBT ["SP", "MP"] <- p_SPMP2
+m_P_strBT ["SP", "S"] <- p_SPS2
+m_P_strBT ["SP", "D"]  <- p_D
+
+# From S
+m_P_strBT ["S", "S"] <- 1 - p_SMP2 - p_SSP2 - p_D 
+m_P_strBT ["S", "MP"]  <- p_SMP2
+m_P_strBT ["S", "SP"]  <- p_SSP2
+m_P_strBT ["S", "D"]  <- p_D
+
+# From D
+m_P_strBT ["D", "D"]   <- 1
+m_P_strBT
+
+## ------------------------Check that all rows sum to 1-------------------------------------------------------------------
+## Check if transition probability matrices are valid ----
+## Check that transition probabilities are [0, 1] 
+check_transition_probability (m_P, verbose = TRUE) # m_P >= 0 && m_P <= 1
+check_transition_probability (m_P_strBT, verbose = TRUE) # m_P_strBT >= 0 && m_P_strBT <= 1
+
+## Check that all rows sum to 1 
+check_sum_of_transition_array(m_P, n_states = n_states, n_cycles = n_cycles, verbose = TRUE)  # rowSums(m_P) == 1
+check_sum_of_transition_array(m_P_strBT, n_states = n_states, n_cycles = n_cycles, verbose = TRUE)  # rowSums(m_P_strBT) == 1
+rowSums(m_P_strBT) 
+
+## -------------------------------- Dysmenorrhea -TimeHomogeneous-Solution--------------------------------
+# Iterative solution of time-independent DysmeM
+for(t in 1:n_cycles){
+  # For SoC
+  m_M[t + 1, ] <- m_M[t, ] %*% m_P
+  # For strategy BT
+  m_M_strBT[t + 1, ] <- m_M_strBT[t, ] %*% m_P_strBT
+}
+m_M[t + 1, ]
+m_M_strBT[t + 1, ]
+
+## -------------------------------------- Dysmenorrhea -Trace-TimeHom----------------------------------------
+                              ## Method 1
+
+cols <- get_DARTH_cols()
+lty <-  c("MP" = 1, "SP" = 2, "S" = 4, "D" = 3)
+library(melt)
+ggplot(melt(m_M), aes(x = Var1, y = value, 
+                      color = Var2, linetype = Var2)) +
+  geom_line(linewidth = 1) +
+  scale_colour_manual(name = "Health state", 
+                     values = cols) +
+  scale_linetype_manual(name = "Health state",
+                        values = lty) +
+  scale_x_continuous(breaks = number_ticks(8)) + 
+  xlab("Cycle") +
+  ylab("Proportion of the cohort") +
+  theme_bw(base_size= 16) +
+  theme(legend.position = "bottom",#c(0.7, 0.75), 
+        legend.background = element_rect(fill = NA))
+
+ 
+                                              OR Method 2 
+#  Run Markov model ----
+#* Iterative solution of time-independent cSTM
+for(t in 1:n_cycles){
+  # For SoC
+  m_M[t + 1, ] <- m_M[t, ] %*% m_P
+  # For strategy B
+  m_M_strBT[t + 1, ] <- m_M_strBT[t, ] %*% m_P_strBT
+  
+}
+
+## Store the cohort traces in a list ----
+l_m_M <- list(m_M,
+              m_M_strBT)
+names(l_m_M) <- v_names_str
+
+# Plot Outputs ----
+#* Plot the cohort trace for strategies SoC and A
+#* (Function included in "R/Functions.R"; depends on the `ggplot2` package)
+plot_trace(m_M)
+ 
+
+
+## -------------------------------State-rewards-Utility and Cost_SoC---------------------------------------------------
+
+# Vector of state utilities under SoC
+v_u_SoC <- c(MP = u_MP, SP = u_SP, S = u_S, D = u_D)
+v_u_SoC
+# Vector of state costs under SoC
+v_c_SoC <- c(MP = c_MP, SP = c_SP, S = c_S, D = c_D)
+v_c_SoC
+
+## -------------------------------------State-rewards- Utility and Cost_BT----------------------------------------------
+
+# Vector of state utilities for strategy BT
+v_u_strBT <- c(MP = u_MP2 , SP = u_SP2, S = u_S2, D = u_D2) # Création d’un vecteur pour stocker l’utilité pour chaq etat de santé
+v_u_strBT
+# Vector of state costs for strategy B
+v_c_ strBT <- c(MP = c_MP2, SP = c_SP2, S = c_S2, D = c_D2) # Création d’un vecteur pour stocker les couts pour chaq etat de santé
+
+v_c_ strBT
+
+
+## ------------------------------------Expected-outcomes-each-cycle----------------------------------------------------
+
+# Vector of QALYs under SoC
+v_qaly_SoC <- m_M %*% v_u_SoC# Création d’un vecteur pour stocker les Qalys totaux pour chaque cycle
+
+# Vector of costs under SoC
+v_cost_SoC <- m_M %*% v_c_SoC # Création d’un vecteur pour stocker les couts totaux pour chaque cycle
+
+# Vector of QALYs for strategy BT
+v_qaly_strBT <- m_M_strBT %*% v_u_strBT
+
+# Vector of costs for strategy BT
+v_cost_strBT <- m_M_strBT %*% v_c_strBT
+
+## --------------------------------------------within-cycle-vector----------------------------------------------------------
+# First, we define two functions to identify if a number is even or odd
+is_even <- function(x) x %% 2 == 0
+is_odd <- function(x) x %% 2 != 0
+
+## Vector with cycles
+v_cycles <- seq(1, n_cycles+1) #Create a vector containing the 20 cycles
+v_cycles
+## Generate 2/3 and 4/3 multipliers for even and odd entries, respectively
+v_wcc <- ((v_cycles %% 2)==0)*(2/3) + ((v_cycles %% 2)!=0)*(4/3)
+
+## Substitute 1/3 in first and last entries
+v_wcc[1] <- v_wcc[n_cycles + 1] <- 1/3
+
+
+## ----------------------------------------Discount vectors------------------------------------------------------------------
+
+# Discount weight for effects
+v_dwe <- 1 / ((1 + d_e) ^ (0:(n_cycles))) 
+
+# Discount weight for costs 
+v_dwc <- 1 / ((1 + d_c) ^ (0:(n_cycles)))    
+
+## ---------------------------------------Expected-outcomes-all-cycles--------------------------------------------------
+
+## Expected discounted QALYs under SoC
+n_tot_qaly_SoC <- t(v_qaly_SoC) %*% (v_dwe * v_wcc)
+
+## Expected discounted costs under SoC
+n_tot_cost_SoC <- t(v_cost_SoC) %*% (v_dwc * v_wcc)
+
+## Expected discounted QALYs for strategy BT
+n_tot_qaly_strBT <- t(v_qaly_strBT) %*% (v_dwe * v_wcc)
+
+## Expected discounted costs for strategy BT
+n_tot_cost_strBT <- t(v_cost_strBT) %*% (v_dwc * v_wcc)
+
+
+## -------------- TABLEAU DES COUTS ET QALYS Expected-outcomes, --------------------------------------
+
+m_outcomes <- matrix(c(dollars(c(n_tot_cost_SoC, n_tot_cost_strBT)),
+                       format(round(c(n_tot_qaly_SoC,
+                               n_tot_qaly_strBT), 3), nsmall = 3)),
+                     ncol = 2, nrow = length(v_names_str), 
+                     dimnames = list(v_names_str,
+                                     c("Costs", "QALYs")))
+
+## ------------CEA-analysis------------------------------------------------------------------------------------------------
+### Vector of costs
+v_cost_str <- c(n_tot_cost_SoC, n_tot_cost_strBT)
+
+### Vector of effectiveness
+v_qaly_str <- c(n_tot_qaly_SoC,  n_tot_qaly_strBT)
+
+### Calculate incremental cost-effectiveness ratios (ICERs)
+c_incr<- n_tot_cost_strBT- n_tot_cost_SoC
+
+q_incr <- n_tot_qaly_strBT - n_tot_qaly_SoC
+
+# Incremental cost-effectiveness ratio
+ICER <- c_incr/q_incr
+
+
+## -------------------------------Plan CEA and table, ----------------------------------------------------------------------
+
+table_cea <- df_cea
+table_cea
+
+# Incremental cost-effectiveness ratio
+n_cohort <- 1000
+c_incr  <-  n_tot_cost_strBT - n_tot_cost_ SoC
+q_incr  <-  n_tot_qaly_strBT- n_tot_qaly_SoC 
+ICER <- c_incr/q_incr 
+wtp <- 20000 
+plot(x = q_incr/n_cohort, y = c_incr/n_cohort,
+     xlim = c(0, 2),
+     ylim = c(0, 15e3),
+     pch = 16, cex = 1.5,
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = wtp) # willingness-to-pay threshold (Rajoute la ligne d’efficience)
+  
+## -------------------------------Plan CEA and table, ----------------------------------------------------------------------
+
+# Probability Sensitivity Analysis (PSA)
+
+ce_markov <- function(start_pop,
+                      p_matrix,
+                      state_c_matrix,
+                      trans_c_matrix,
+                      state_q_matrix,
+                      n_cycles = 21,
+                      init_age = 25,
+                      s_names = NULL,
+                      t_names = NULL) {
+  
+  n_states <- length(start_pop)
+  n_states
+  n_treat <- dim(p_matrix)[3]
+  n_treat
+  
+  pop <- array(data = NA,
+               dim = c(n_states, n_cycles, n_treat),
+               dimnames = list(state = s_names,
+                               cycle = NULL,
+                               treatment = t_names))
+  pop
+  
+  for (i in 1:n_states) {
+    pop[i, cycle = 1, ] <- start_pop[i]
+  }
+  
+  cycle_empty_array <-
+    array(NA,
+          dim = c(n_treat, n_cycles),
+          dimnames = list(treatment = t_names,
+                          cycle = NULL))
+  
+  cycle_empty_array
+  
+  cycle_state_costs <- cycle_empty_array
+  cycle_state_costs
+  cycle_costs <- cycle_QALYs <- cycle_empty_array
+  cycle_costs
+  LE <- LYs <- cycle_empty_array    # life expectancy; life-years
+  cycle_QALE <- cycle_empty_array   # quality-adjusted life expectancy
+  
+  total_costs <- setNames(rep(NA, n_treat), t_names)
+  total_costs
+  total_QALYs <- setNames(rep(NA, n_treat), t_names)
+  total_QALYs
+  
+  for (i in 1:n_treat) {
+    
+    age <- init_age
+    
+    for (j in 2:n_cycles) {
+      
+      # difference from point estimate case
+      # pass in functions for random sample
+      # rather than fixed values
+      p_matrix <- p_matrix_cycle(p_matrix, age, j - 1,
+                                 
+                                 tpMPSP = tpMPSP(),
+                                 tpMPS = tpMPS(),
+                                 tpSPMP = tpSPMP(),
+                                 tpSPS = tpSPS(), 
+                                 tpSMP = tpSMP(), 
+                                 tpSSP = tpSSP(), 
+                                 tpMPSP2 = tpMPSP2(),
+                                 tpMPS2 = tpMPS2(), 
+                                 tpSPMP2 = tpSPMP2(), 
+                                 tpSPS2 = tpSPS2(),
+                                 tpSMP2 = tpSMP2(),
+                                 tpSSP2 = tpSSP2()) 
+                                 
+      
+      # Matrix multiplication
+      pop[, cycle = j, treatment = i] <-
+        pop[, cycle = j - 1, treatment = i] %*% p_matrix[, , treatment = i]
+      
+      
+      age <- age + 1
+    }
+    
+    cycle_state_costs[i, ] <-
+      (state_c_matrix[treatment = i, ] %*% pop[, , treatment = i]) * 1/(1 + cDr)^(1:n_cycles - 1)
+    
+    cycle_costs[i, ] <- cycle_state_costs[i, ] 
+    
+    LE[i, ] <- c(1,1,1,0) %*% pop[, , treatment = i]
+    
+    LYs[i, ] <- LE[i, ] * 1/(1 + oDr)^(1:n_cycles - 1)
+    
+    cycle_QALE[i, ] <-
+      state_q_matrix[treatment = i, ] %*%  pop[, , treatment = i]
+    
+    cycle_QALYs[i, ] <- cycle_QALE[i, ] * 1/(1 + oDr)^(1:n_cycles - 1)
+    
+    total_costs[i] <- sum(cycle_costs[treatment = i, -1])
+    total_QALYs[i] <- sum(cycle_QALYs[treatment = i, -1])
+  }
+  
+  list(pop = pop,
+       cycle_costs = cycle_costs,
+       cycle_QALYs = cycle_QALYs,
+       total_costs = total_costs,
+       total_QALYs = total_QALYs)
+}
+
+# replace point values with functions to random sample
+cMP <- function () rnorm(1, 1144 , 529.84)
+cSP <- function () rnorm(1, 1378, 3054.93)
+cS <- function() rnorm(1, 183, 49.51)
+cMP2 <- function() rnorm(1, 937, 564.40)
+cSP2 <- function() rnorm(1, 427, 301.93)
+cS2 <- function() rnorm(1, 731, 366.19)
+tpMPSP <- function() rbeta(1, 75, 25)
+tpMPS <- function() rbeta(1,  10, 90)
+tpSPMP <- function() rbeta(1, 15, 60)     
+tpSPS <- function() rbeta(1, 5, 70)
+tpSMP <- function() rbeta(1, 2, 8)
+tpSSP <- function() rbeta(1, 5, 5)
+tpMPSP2 <- function() rbeta(1, 5, 25)    
+tpMPS2 <- function() rbeta(1,19, 11)     
+tpSPMP2 <- function() rbeta(1, 1, 4)     
+tpSPS2 <- function() rbeta(1, 3, 2)     
+tpSMP2 <- function() rbeta(1, 4, 15)     
+tpSSP2 <- function() rbeta(1, 2, 17)         
+uMP <- function() rbeta(1, 12.07, 4.29)    
+uSP <- function() rbeta(1, 11.58, 28.16)    
+uS <- function() rbeta(1, 13.18, 1.54)
+uMP2 <- function() rbeta(1, 5.2, 1.4)
+uSP2 <- function() rbeta(1, 1.3, 2.1)
+uS2  <- function() rbeta(1, 11, 1)
+
+
+
+# Define cost and QALYs as functions
+
+state_c_matrix <- function() {
+  matrix(c(cMP() , cSP(), cS(), 0, 
+           cMP2(), cSP2(), cS2(), 0),
+         byrow = TRUE,
+         nrow = n_treatments,
+         dimnames = list(t_names,
+                         s_names))
+}
+state_c_matrix
+
+state_q_matrix <- function() {
+  matrix(c(uMP(), uSP(), uS(), 0,
+           uMP2(), uSP2(), uS2(), 0),
+         byrow = TRUE,
+         nrow = n_treatments,
+         dimnames = list(t_names,
+                         s_names))
+}
+
+
+
+## Run PSA analysis ----
+
+n_trials <- 500
+
+costs <- matrix(NA, nrow = n_trials, ncol = n_treatments,
+                dimnames = list(NULL, t_names))
+costs
+qalys <- matrix(NA, nrow = n_trials, ncol = n_treatments,
+                dimnames = list(NULL, t_names))
+qalys
+for (i in 1:n_trials) {
+  ce_res <- ce_markov(start_pop = c(n_cohort, 0, 0,0),
+                      p_matrix,
+                      state_c_matrix(),
+                      trans_c_matrix(),
+                      state_q_matrix())
+  
+  costs[i, ] <- ce_res$total_costs
+  
+  qalys[i, ] <- ce_res$total_QALYs
+}
+
+## Plot results ----
+
+# incremental costs and QALYs of Standard_Care vs to Innovative_therapie
+c_incr_psa <- costs[, "Innovative_therapie"] - costs[, "Standard_Care"]
+c_incr_psa
+q_incr_psa <- qalys[, "Innovative_therapie"] - qalys[, "Standard_Care"]
+q_incr_psa
+plot(x = q_incr_psa/n_cohort, y = c_incr_psa/n_cohort,
+     xlim = c(-10, 10),
+     ylim = c(-55e3, 55e3),
+     pch = 16, cex = 1.2,
+     col = "grey",
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = 0, lwd = 2) # Willingness-to-pay threshold
+points(x = q_incr/n_cohort, y = c_incr/n_cohort,
+       col = "red", pch = 16, cex = 1.5)
+
+png("figures/ceplane_psa.png", width = 4, height = 4, units = "in", res = 640)
+plot(x = q_incr_psa/n_cohort, y = c_incr_psa/n_cohort,
+     xlim = c(0, 2),
+     ylim = c(0, 15e3),
+     pch = 16, cex = 1.2,
+     col = "grey",
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = wtp, lwd = 2) # Willingness-to-pay threshold
+points(x = q_incr/n_cohort, y = c_incr/n_cohort,
+       col = "red", pch = 16, cex = 1.5)
+dev.off()
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+           
