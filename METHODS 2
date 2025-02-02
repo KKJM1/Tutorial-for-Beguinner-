@@ -1,0 +1,452 @@
+## model set-up ----
+
+t_names <- c("Standard_Care", "Innovative_therapie")
+n_treatments <- length(t_names)
+
+s_names  <- c("Moderate_Pain", "Severe_Pain", "Succes", "Dead")
+n_states <- length(s_names)
+
+n_cohort <- 1000
+cycle <- 1
+n_cycles <- 21
+Initial_age <- 25
+cMP    <- 1 144 # cost of being Moderate pain 
+cSP   <- 1 378 # cost of being Severe Pain 
+cS   <- 183# cost of being Succes Treatment 
+uMP    <- 0.74     # utility of being Moderate pain
+uSP   <- 0.29# utility of being Severe Pain
+uS   <- 0.89 # utility of being Succes Treatment
+
+# Innovative Therapie (BT)
+cMP2 <- 937 # cost of being Moderate pain 
+cSP2   <- 427 # cost of being Severe Pain 
+cS2   <- 731 # cost of being Succes Treatment 
+uMP2    <- 0.78 # utility of being Moderate pain
+uSP2   <- 0.38# utility of being Severe Pain
+uS2   <- 0.92# utility of being Succes Treatment
+oDr <- 0.05 # Annual discount rate of utility
+cDr <- 0.05 # Annual discount rate of cost
+tpMPSP <- 0.75 # probability of Moderate Pain becoming severe Pain
+tpMPS <- 0.10 # probability of Moderate Pain Getting Succes Treatment
+
+tpSPMP <- 0.20     # probability of Severe Pain becoming Moderate Pain
+tpSPS <- 0.07 # probability of Severe Pain Getting Succes Treatment
+
+tpSMP <- 0.20 # probability of Succes Treatment becoming Moderate Pain
+tpSSP <- 0.30 # probability of Succes Treatment becoming Severe Pain
+
+# Innovative Therapie (BT)
+tpMPSP2 <- 0.17 # probability of Moderate Pain becoming severe Pain
+tpMPS2 <- 0.63 # probability of Moderate Pain Getting Succes Treatment
+
+tpSPMP2 <- 0.20 # probability of Severe Pain becoming Moderate Pain
+tpSPS2 <- 0.60 # probability of Severe Pain Getting Succes Treatment
+
+tpSMP2 <- 0.21 # probability of Succes Treatment becoming Moderate Pain
+tpSSP2 <- 0.11     # probability of Succes Treatment becoming Severe Pain
+tpD <- 0.002  # Same probability of Moving in dead state for each treatment
+
+# cost of staying in state
+state_c_matrix <-
+  matrix(c(cMP , cSP, cS, 0,
+                  cMP2, cSP2, cS2, 0),
+         byrow = TRUE,
+         nrow = n_treatments,
+         dimnames = list(t_names,
+                         s_names))
+
+
+# qaly when staying in state
+state_q_matrix <-
+  matrix(c(uMP, uSP, uS, 0,
+           uMP2, uSP2, uS2, 0),
+         byrow = TRUE,
+         nrow = n_treatments,
+         dimnames = list(t_names,
+                         s_names))
+
+# Transition probabilities ---- 
+# time-homogeneous
+p_matrix <- array(data = c(1 - tpMPSP - tpMPS - tpD, tpSPMP, tpSMP,0,
+                           tpMPSP, 1 - tpSPMP - tpSPS - tpD, tpSSP, 0,
+                           tpMPS, tpSPS,  1 - tpSMP - tpSSP - tpD, 0,
+                           tpMPD, tpSPD, tpD,1,
+                           1 - tpMPSP2 - tpMPS2 - tpD, tpSPMP2, tpSMP2, 0,
+                           tpMPSP2, 1 - tpSPMP2 - tpSPS2 - tpD, tpSSP2, 0,
+                           tpMPS2, tpSPS2,  1 - tpSMP2 - tpSSP2 - tpD, 0,
+                           tpD, tpD, tpD, 1),
+                  dim = c(n_states, n_states, n_treatments),
+                  dimnames = list(from = s_names,
+                                  to = s_names,
+                                  t_names))
+
+
+# Store population output for each cycle 
+
+# state populations
+pop <- array(data = NA,
+             dim = c(n_states, n_cycles, n_treatments),
+             dimnames = list(state = s_names,
+                             cycle = NULL,
+                             treatment = t_names))
+
+pop["Moderate_Pain ", cycle = 1, ] <- n_cohort
+pop["Severe_Pain", cycle = 1, ] <- 0
+pop["Succes ", cycle = 1, ] <- 0
+pop["Dead", cycle = 1, ] <- 0
+
+#Idem pour Innovative Therapie
+
+# Sum costs and QALYs for each cycle at a time for each drug 
+cycle_empty_array <-
+  array(NA,
+        dim = c(n_treatments, n_cycles),
+        dimnames = list(treatment = t_names,
+                        cycle = NULL))
+
+
+cycle_state_costs <- cycle_empty_array
+cycle_costs <- cycle_QALYs <- cycle_empty_array
+LE <- LYs <- cycle_empty_array    # life expectancy; life-years
+cycle_QALE <- cycle_empty_array   # quality-adjusted life expectancy
+
+total_costs <- setNames(c(NA, NA), t_names)
+total_costs
+      Standard_Care Innovative_therapie 
+                 NA                  NA 
+
+total_QALYs <- setNames(c(NA, NA), t_names)
+> total_QALYs
+      Standard_Care Innovative_therapie 
+                 NA                  NA 
+
+
+# Time-dependent probability matrix ----
+
+p_matrix_cycle <- function(p_matrix, age, cycle,
+                           tpMPSP = 0.75,
+                           tpMPS = 0.10,
+                           tpSPMP = 0.20,
+                           tpSPS = 0.07, 
+                           tpSMP = 0.20, 
+                           tpSSP = 0.30, 
+                              tpMPSP2 = 0.17,
+                           tpMPS2 = 0.63, 
+                           tpSPMP2 = 0.20, 
+                           tpSPS2 = 0.60,
+                           tpSMP2 = 0.21,
+                           tpSSP2 = 0.11, 
+                          tpD = 0.0002) {
+  
+  # Matrix containing transition probabilities for Standard_care
+p_matrix ["Moderate_Pain ", " Moderate_Pain "," Standard_care "] <- 1 - tpMPSP - tpMPS - tpD
+p_matrix ["Moderate_Pain ", "Severe_Pain", "Standard_care "] <- tpMPSP 
+p_matrix ["Moderate_Pain", "Succes", "Standard_care "]   <- tpMPS
+p_matrix ["Moderate_Pain", "Dead"," Standard_care "]   <- tpD
+p_matrix ["Severe_Pain", "Severe_Pain", "Standard_care "] <- 1 - tpSPMP - tpSPS - tpD
+p_matrix ["Severe_Pain", "Moderate_Pain", "Standard_care "] <- tpSPMP
+p_matrix ["Severe_Pain", "Succes", "Standard_care "] <- tpSPS
+p_matrix ["Severe_Pain", "Dead", "Standard_care "] <- tpD
+p_matrix ["Succes", " Succes"," Standard_care "] <- 1 - tpSMP - tpSSP - tpD
+p_matrix ["Succes", "Moderate_Pain", "Standard_care"] <- tpSMP
+p_matrix ["Succes", "Severe_Pain", "Standard_care "] <- tpSSP
+p_matrix ["Succes", "Dead", "Standard_care "] <- tpSD
+p_matrix ["Dead", "Dead"," Standard_care "]  <- 1
+
+  # Matrix containing transition probabilities for Innovative_therapie
+  p_matrix["Moderate_Pain", " Moderate_Pain", " Innovative_therapie "]  <- 1 - tpMPSP2 - tpMPS2 - tpD
+  p_matrix["Moderate_Pain", " Severe_Pain", " Innovative_therapie"]  <- tpMPSP2
+  p_matrix["Moderate_Pain", " Succes", " Innovative_therapie"]   <- tpMPS2
+  p_matrix["Moderate_Pain", " Dead", " Innovative_therapie"]   <- tpD
+  p_matrix["Severe_Pain", " Severe_Pain", " Innovative_therapie"]  <- 1 - tpSPMP2 - tpSPS2 - tpD 
+  p_matrix["Severe_Pain", " Moderate_Pain", "Innovative_therapie"] <- tpSPMP2
+  p_matrix["Severe_Pain", " Succes", "Innovative_therapie"] <- tpSPS2
+  p_matrix["Severe_Pain", " Dead", "Innovative_therapie"]  <- tpD
+  p_matrix["Succes", " Succes", "Innovative_therapie"] <- 1 - tpSMP2 - tpSSP2 - tpD 
+  p_matrix["Succes", " Moderate_Pain", "Innovative_therapie"]  <- tpSMP2
+  p_matrix["Succes", " Severe_Pain", "Innovative_therapie"]  <- tpSSP2
+  p_matrix["Succes", " Dead", "Innovative_therapie"]  <- tpD
+  p_matrix["Dead", " Dead", "Innovative_therapie"]   <- 1
+  return(p_matrix)
+}
+
+  return(p_matrix)
+}
+## Run model ----
+
+for (i in 1:n_treatments) {
+  
+  age <- Initial_age
+  
+  for (j in 2:n_cycles) {
+    
+    p_matrix <- p_matrix_cycle(p_matrix, age, j - 1)
+    
+    pop[, cycle = j, treatment = i] <-
+      pop[, cycle = j - 1, treatment = i] %*% p_matrix[, , treatment = i]
+
+
+    age <- age + 1
+  }
+  
+  cycle_state_costs[i, ] <-
+    (state_c_matrix[treatment = i, ] %*% pop[, , treatment = i]) * 1/(1 + cDr)^(1:n_cycles - 1)
+     cycle_state_costs 
+                     cycle
+treatment                [,1]    [,2]      [,3]    [,4]     [,5]     [,6]
+  Standard_Care       1144000 1164925 1081227.4 1020891 968409.2 920613.0
+  Innovative_therapie  937000  686031  663465.2  632462 602281.5 573491.3
+ 
+  cycle_costs[i, ] <- cycle_state_costs[i, ] 
+
+
+  # life expectancy
+  LE[i, ] <- c(1,1,1,0) %*% pop[, , treatment = i]
+  
+  # life-years
+  LYs[i, ] <- LE[i, ] * 1/(1 + oDr)^(1:n_cycles - 1)
+  
+  # quality-adjusted life expectancy
+  cycle_QALE[i, ] <-
+    state_q_matrix[treatment = i, ] %*% pop[, , treatment = i]
+  
+  # quality-adjusted life-years
+  cycle_QALYs[i, ] <- cycle_QALE[i, ] * 1/(1 + oDr)^(1:n_cycles - 1)
+  
+  total_costs[i] <- sum(cycle_costs[treatment = i, -1])
+
+  total_QALYs[i] <- sum(cycle_QALYs[treatment = i, -1])
+
+}
+
+## Plot results ----
+
+# Incremental costs and QALYs of with_drug vs to without_drug
+c_incr <- total_costs["Innovative_therapie"] - total_costs["Standard_Care"]
+
+
+q_incr <- total_QALYs["Innovative_therapie"] - total_QALYs["Standard_Care"]
+
+
+# Incremental cost-effectiveness ratio
+ICER <- c_incr/q_incr
+
+wtp <- 20000
+plot(x = q_incr/n_cohort, y = c_incr/n_cohort,
+     xlim = c(0, 2),
+     ylim = c(0, 15e3),
+     pch = 16, cex = 1.5,
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = wtp) # willingness-to-pay threshold
+
+
+png("figures/ceplane_point.png", width = 4, height = 4, units = "in", res = 640)
+plot(x = q_incr/n_cohort, y = c_incr/n_cohort,
+     xlim = c(0, 2),
+     ylim = c(0, 15e3),
+     pch = 16, cex = 1.5,
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = wtp) # willingness-to-pay threshold
+dev.off()
+ 
+#############################################
+# Probability Sensitivity Analysis (PSA)
+
+ce_markov <- function(start_pop,
+                      p_matrix,
+                      state_c_matrix,
+                      state_q_matrix,
+                      n_cycles = 21,
+                      init_age = 25,
+                      s_names = NULL,
+                      t_names = NULL) {
+  
+  n_states <- length(start_pop)
+  n_treat <- dim(p_matrix)[3]
+  
+  pop <- array(data = NA,
+               dim = c(n_states, n_cycles, n_treat),
+               dimnames = list(state = s_names,
+                               cycle = NULL,
+                               treatment = t_names))
+  
+  for (i in 1:n_states) {
+    pop[i, cycle = 1, ] <- start_pop[i]
+  }
+
+  cycle_empty_array <-
+    array(NA,
+          dim = c(n_treat, n_cycles),
+          dimnames = list(treatment = t_names,
+                          cycle = NULL))
+  
+  cycle_state_costs <- cycle_empty_array
+  cycle_costs <- cycle_QALYs <- cycle_empty_array
+  LE <- LYs <- cycle_empty_array    # life expectancy; life-years
+  cycle_QALE <- cycle_empty_array   # quality-adjusted life expectancy
+  
+  total_costs <- setNames(rep(NA, n_treat), t_names)
+  total_QALYs <- setNames(rep(NA, n_treat), t_names)
+  
+  for (i in 1:n_treat) {
+    
+    age <- init_age
+    
+    for (j in 2:n_cycles) {
+      
+      # difference from point estimate case
+      # pass in functions for random sample
+      # rather than fixed values
+      p_matrix <- p_matrix_cycle (p_matrix, age, j - 1,
+                                 
+                           tpMPSP = tpMPSP(),
+                           tpMPS = tpMPS(),
+                           tpSPMP = tpSPMP(),
+                           tpSPS = tpSPS(), 
+                           tpSMP = tpSMP(), 
+                           tpSSP = tpSSP(), 
+                              tpMPSP2 = tpMPSP2 (),
+                           tpMPS2 = tpMPS2 (), 
+                           tpSPMP2 = tpSPMP2 (), 
+                           tpSPS2 = tpSPS2 (),
+                          tpSMP2 = tpSMP2 (),
+                          tpSSP2 = tpSSP2 ())
+      # Matrix multiplication
+      pop[, cycle = j, treatment = i] <-
+        pop[, cycle = j - 1, treatment = i] %*% p_matrix[, , treatment = i]     
+      age <- age + 1
+    }
+    
+    cycle_state_costs[i, ] <-
+      (state_c_matrix[treatment = i, ] %*% pop[, , treatment = i]) * 1/(1 + cDr)^(1:n_cycles - 1)
+        
+    cycle_costs[i, ] <- cycle_state_costs[i, ]
+    
+    LE[i, ] <- c(1,1,1,0) %*% pop[, , treatment = i]
+    LYs[i, ] <- LE[i, ] * 1/(1 + oDr)^(1:n_cycles - 1)
+    
+    cycle_QALE[i, ] <-
+     state_q_matrix[treatment = i, ] %*%  pop[, , treatment = i] 
+    cycle_QALYs[i, ] <- cycle_QALE[i, ] * 1/(1 + oDr)^(1:n_cycles - 1)
+    total_costs[i] <- sum(cycle_costs[treatment = i, -1])
+    total_QALYs[i] <- sum(cycle_QALYs[treatment = i, -1])
+  }
+  
+  list(pop = pop,
+       cycle_costs = cycle_costs,
+       cycle_QALYs = cycle_QALYs,
+       total_costs = total_costs,
+       total_QALYs = total_QALYs)
+}
+
+# replace point values with functions to random sample
+cMP <- function () rnorm(1, 1 144 , 529.84)
+cSP <- function () rnorm(1, 1 378, 3054.93)
+cS <- function() rnorm(1, 183, 49.51)
+cMP2 <- function() rnorm(1, 937, 564.40)
+cSP2 <- function() rnorm(1, 427, 301.93)
+cS2 <- function() rnorm(1, 731, 366.19)
+tpMPSP <- function() rbeta(1, 75, 25)
+tpMPS <- function() rbeta(1,  10, 90)
+tpSPMP <- function() rbeta(1, 15, 60)     
+tpSPS <- function() rbeta(1, 5, 70)
+tpSMP <- function() rbeta(1, 2, 8)
+tpSSP <- function() rbeta(1, 5, 5)
+tpMPSP2 <- function() rbeta(1, 5, 25)    
+tpMPS2 <- function() rbeta(1,19, 11)     
+tpSPMP2 <- function() rbeta(1, 1, 4)     
+tpSPS2 <- function() rbeta(1, 3, 2)     
+tpSMP2 <- function() rbeta(1, 4, 15)     
+tpSSP2 <- function() rbeta(1, 2, 17)         
+uMP <- function() rbeta(1, 12.07, 4.29)    
+uSP   <- function() rbeta(1, 11.58, 28.16)    
+uS   <- function() rbeta(1, 13.18, 1.54)
+uMP2 <- function() rbeta(1, 5.2, 1.4)
+uSP2 <- function() rbeta(1, 1.3, 2.1)
+uS2  <- function() rbeta(1, 11, 1)
+
+
+# Define cost and QALYs as functions
+
+state_c_matrix <- function() {
+  matrix(c(cMP() , cSP(), cS(), 0, 
+                  cMP2(), cSP2(), cS2(), 0),
+           byrow = TRUE,
+           nrow = n_treatments,
+           dimnames = list(t_names,
+                           s_names))
+}
+
+state_q_matrix <- function() {
+  matrix(c(uMP(), uSP(), uS(), 0,
+           uMP2(), uSP2(), uS2(), 0),
+         byrow = TRUE,
+         nrow = n_treatments,
+         dimnames = list(t_names,
+                         s_names))
+}
+
+
+
+## Run PSA analysis ----
+
+n_trials <- 500
+
+costs <- matrix(NA, nrow = n_trials, ncol = n_treatments,
+                dimnames = list(NULL, t_names))
+
+
+qalys <- matrix(NA, nrow = n_trials, ncol = n_treatments,
+                dimnames = list(NULL, t_names))
+
+
+for (i in 1:n_trials) {
+  ce_res <- ce_markov(start_pop = c(n_cohort, 0, 0,0),
+                      p_matrix,
+                      state_c_matrix(),
+                      trans_c_matrix(),
+                      state_q_matrix())
+  
+  costs[i, ] <- ce_res$total_costs
+  qalys[i, ] <- ce_res$total_QALYs
+}
+
+## Plot results ----
+
+# incremental costs and QALYs of Standard_Care vs to Innovative_therapie
+c_incr_psa <- costs[, "Innovative_therapie"] - costs[, "Standard_Care"]
+
+q_incr_psa <- qalys[, "Innovative_therapie"] - qalys[, "Standard_Care"]
+
+plot(x = q_incr_psa/n_cohort, y = c_incr_psa/n_cohort,
+     xlim = c(0, 2),
+     ylim = c(0, 15e3),
+     pch = 16, cex = 1.2,
+     col = "grey",
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = wtp, lwd = 2) # Willingness-to-pay threshold
+points(x = q_incr/n_cohort, y = c_incr/n_cohort,
+       col = "red", pch = 16, cex = 1.5)
+
+png("figures/ceplane_psa.png", width = 4, height = 4, units = "in", res = 640)
+plot(x = q_incr_psa/n_cohort, y = c_incr_psa/n_cohort,
+     xlim = c(0, 2),
+     ylim = c(0, 15e3),
+     pch = 16, cex = 1.2,
+     col = "grey",
+     xlab = "QALY difference",
+     ylab = paste0("Cost difference (", enc2utf8("\u00A3"), ")"),
+     frame.plot = FALSE)
+abline(a = 0, b = wtp, lwd = 2) # Willingness-to-pay threshold
+points(x = q_incr/n_cohort, y = c_incr/n_cohort,
+       col = "red", pch = 16, cex = 1.5)
+dev.off()
+
+
+
